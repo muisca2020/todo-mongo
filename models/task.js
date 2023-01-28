@@ -1,94 +1,93 @@
-const mongo_local = require('mongodb').MongoClient;
+const MongoClient = require('mongodb').MongoClient;
 const debug = require('debug')('todo-mongo:task');
 
-let partitionKey = undefined;
-
-// Este es el modelo de datos
 class Task {
     /**
      * Lee, añade y actualiza tareas en Mongo DB
      * @param {MongoClient} mongoClient 
      * @param {string} databaseId 
-     * @param {string} containerId 
+     * @param {string} collectionName 
      */
-    constructor(mongoClient, databaseId, containerId){
+    constructor(mongoClient, databaseId, collectionName){
         this.client = mongoClient;
         this.databaseId = databaseId;
-        this.containerId = containerId;
+        this.collectionName = collectionName;
 
-        this.database = null;
-        this.container = null;
+        this.db = null;
+        this.collection = null;
     }
 
     /** Esta función inicializa la base de datos */
     async init(){
         debug('Inicializando DB');
-        const dbResponse = await this.client.databases.createIfNotExist({
-            id: this.databaseId
-        });
+        this.db = await this.client.db(this.databaseId);
         
-        this.database = dbResponse.database;
-        debug('Inicializando contenedor');
-
-        const contResponse = await this.database.containers.createIfNotExist({
-            id: this.containerId
-        });
-        this.container = contResponse.container;
+        debug('Inicializando colección');
+        this.collection = await this.db.createCollection(this.collectionName);
     }
 
     /**
      * Función para encontrar información (R)
-     * @param {string} querySpec
+     * @param {object} query 
      */
-    async find(querySpec){
-        debug('Buscando en l((a bases de datos');
-        // Primero se valida si el container se creó
-        if(!this.container) {
-            throw new Error("Contenedor no inicializado");
+    async find(query){
+        debug('Buscando en la base de datos');
+        // Primero se valida si la colección se creó
+        if(!this.collection) {
+            throw new Error("Colección no inicializada");
         }
 
-        const { resources } = await this.container.items.query(querySpec).fetchAll();
-        return resources;
+        const docs = await this.collection.find(query).toArray();
+        return docs;
     }
 
     /**
      * Función para la creación de items (C)
      * @param {*} item 
-     * @returns {resource} Item creado en la BD
+     * @returns {object} Item creado en la BD
      */
     async addItem(item) {
         debug('Añadiendo Item a la base de datos');
         item.date = Date.now();
         item.completed = false;
 
-        const { recurso: doc } = await this.container.items.create(item);
-        return doc;
+        const result = await this.collection.insertOne(item);
+        return result.ops[0];
     }
 
     /**
      * Función para actualizar un item (U)
      * @param {string} itemId 
-     * @returns 
+     * @param {object} update 
+     * @returns {object} Item actualizado en la BD
      */
-    async updateItem(itemId) {
+    async updateItem(itemId, update) {
         debug('Actualizando Item');
-        const doc = this.getItem(itemId);
 
-        doc.completed = true;
-        const { resource: replaced } = this.container.item(itemId, partitionKey).replace(doc);
-        return replaced;
+        const result = await this.collection.findOneAndUpdate({ _id: itemId }, { $set: update }, { returnOriginal: false });
+        return result.value;
     }
 
     /**
      * Función para buscar un item
      * @param {string} itemId 
-     * @returns 
+     * @returns {object} Item encontrado en la BD
      */
     async getItem(itemId) {
         debug('Buscando Item en la BD');
-        const { resource } = await this.container.item(itemId, partitionKey);
-        return resource
+        const item = await this.collection.findOne({ _id: itemId });
+        return item;
+    }
+
+    /**
+     * Función para borrar un item (D)
+     * @param {string} itemId 
+     * @returns 
+     */
+    async deleteItem(itemId) {
+        debug('Borrando Item');
+        await this.container.item(itemId, partitionKey).delete();
     }
 }
-
+    
 module.exports = Task;
